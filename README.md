@@ -136,7 +136,7 @@ amaima/
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/your-org/amaima.git
+git clone https://github.com/your-org/AMAIMA.git
 cd amaima
 ```
 
