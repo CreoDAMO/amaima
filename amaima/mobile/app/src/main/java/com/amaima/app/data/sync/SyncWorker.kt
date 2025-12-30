@@ -1,4 +1,4 @@
-// mobile/data/sync/SyncWorker.kt
+// data/sync/SyncWorker.kt
 
 @HiltWorker
 class SyncWorker @AssistedInject constructor(
