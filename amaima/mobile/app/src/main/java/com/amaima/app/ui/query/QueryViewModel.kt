@@ -1,4 +1,4 @@
-// android/ui/query/QueryViewModel.kt
+// ui/query/QueryViewModel.kt
 
 @HiltViewModel
 class QueryViewModel @Inject constructor(
