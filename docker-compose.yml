@@ -1,0 +1,138 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: amaima-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-amaima}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-amaima_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-amaima}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-amaima} -d ${POSTGRES_DB:-amaima}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - amaima-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: amaima-redis
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - amaima-network
+
+  backend:
+    build:
+      context: ./docker/backend
+      dockerfile: Dockerfile
+    container_name: amaima-backend
+    environment:
+      - AMAIMA_ENV=${AMAIMA_ENV:-production}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-amaima}:${POSTGRES_PASSWORD:-amaima}@postgres:5432/${POSTGRES_DB:-amaima}
+      - REDIS_URL=redis://redis:6379/0
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change_this_in_production}
+      - JWT_ALGORITHM=RS256
+      - JWT_ACCESS_TOKEN_EXPIRE_MINUTES=15
+      - JWT_REFRESH_TOKEN_EXPIRE_DAYS=30
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - MODEL_CACHE_DIR=/app/models
+      - OBSERVABILITY_ENABLED=true
+    volumes:
+      - model_cache:/app/models
+      - ./config/backend/amaima_config.yaml:/app/config.yaml:ro
+      - ./config/backend/uvicorn.py:/app/uvicorn.py:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - amaima-network
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 16G
+        reservations:
+          cpus: "2"
+          memory: 8G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  frontend:
+    build:
+      context: ./docker/frontend
+      dockerfile: Dockerfile
+    container_name: amaima-frontend
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NODE_ENV=production
+    volumes:
+      - ./config/frontend/next.config.js:/app/next.config.js:ro
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - amaima-network
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+volumes:
+  postgres_data:
+    name: amaima-postgres-data
+  redis_data:
+    name: amaima-redis-data
+  model_cache:
+    name: amaima-model-cache
+
+networks:
+  amaima-network:
+    name: amaima-network
+    driver: bridge
